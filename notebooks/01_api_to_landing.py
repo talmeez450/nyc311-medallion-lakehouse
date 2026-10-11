@@ -84,8 +84,8 @@ with PipelineRun("Source-to-Landing", load_type, batch_id, batch_dir, params) as
                                     window_end=window_end, where=where, api=API_URL, page_size=page_size))
     run.rows_read = run.rows_inserted = manifest["rows"]
     run.note(f"pages={manifest['pages']} truncated={manifest['truncated']}")
-    if not manifest["truncated"]:
-        advance_watermark(parse_ts(window_end))     # only a complete window moves the watermark
+    # The watermark is NOT moved here. 04_run_pipeline moves it only after Bronze and Silver succeeded.
 
 dbutils.notebook.exit(json.dumps({"batch_id": batch_id, "load_type": load_type,
-                                  "rows": manifest["rows"], "pages": manifest["pages"]}))
+                                  "rows": manifest["rows"], "pages": manifest["pages"],
+                                  "window_end": window_end, "truncated": manifest["truncated"]}))

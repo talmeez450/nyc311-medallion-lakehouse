@@ -201,7 +201,7 @@ Design decisions worth knowing:
   present but impossible (zero, outside the NYC bounding box, not a number) are quarantined. Dropping every ticket without
   coordinates would remove a large share of real requests.
 * **Gap-free incremental window.** `window_start = LEAST(last watermark, end - lookback_days)`; the watermark moves forward only
-  after a complete (not truncated) landing.
+  after the window is fully loaded into Bronze and Silver (a failed or truncated run never moves it).
 
 ## 5. Execution guide
 
@@ -214,7 +214,7 @@ Design decisions worth knowing:
 
 ### 5.2 Standard incremental load (daily)
 
-Open `04_run_pipeline` and run it with the default parameters (`load_type=INCREMENTAL`). It lands the window, loads Bronze and
+Open `04_run_pipeline` and run it with the default parameters (always run incremental loads through `04`, because it moves the watermark after Silver succeeds) (`load_type=INCREMENTAL`). It lands the window, loads Bronze and
 merges into Silver. The window starts at the earlier of the watermark and 7 days ago.
 
 ### 5.3 Backfill
@@ -229,8 +229,7 @@ merges into Silver. The window starts at the earlier of the watermark and 7 days
 | Run only some stages | `04_run_pipeline` | `stages=bronze,silver` with `batch_id` |
 | Quick test | `04_run_pipeline` | `max_pages=1`, `page_size=2000` |
 
-Initial baseline: run `04_run_pipeline` once per month with `load_type=FULL` (February to September 2026, ending at the
-cut-off date). The first incremental run afterwards re-reads the last 7 days, so there is no gap.
+Initial baseline: run `04_run_pipeline` once per month with `load_type=FULL` (February to September 2026; the last month ends at your cut-off date, for example `2026-10-01`). The first incremental run afterwards re-reads the last 7 days, so there is no gap.
 
 ### 5.4 Parameter reference
 

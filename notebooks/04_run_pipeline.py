@@ -56,6 +56,12 @@ if "bronze" in stages:
 if "silver" in stages:
     run_stage("./03_bronze_to_silver", dict(batch_id=batch_id or "ALL"))
 
+# The watermark moves forward only when this window is fully in Silver, so a failure in Bronze or Silver
+# can never leave a gap. A truncated test run (max_pages) never moves it.
+if {"landing", "bronze", "silver"} <= set(stages) and not landed.get("truncated"):
+    advance_watermark(parse_ts(landed["window_end"]))
+    print("watermark advanced to", landed["window_end"])
+
 # COMMAND ----------
 
 display(spark.sql(f"""
