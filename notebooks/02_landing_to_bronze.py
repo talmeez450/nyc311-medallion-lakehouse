@@ -1,14 +1,6 @@
 # Databricks notebook source
 # MAGIC %md
 # MAGIC # 02 Raw (landing files) to Bronze
-# MAGIC * **Strict schema-on-read.** The JSON is read with the explicit `BRONZE_READ_SCHEMA` (StructType /
-# MAGIC   StructField). Schema inference is never used.
-# MAGIC * **Idempotent.** The batch is written with `replaceWhere batch_id = ...`, so running it again on the same
-# MAGIC   files replaces the batch instead of duplicating it.
-# MAGIC * **Schema drift.** Fields that do not fit the schema are kept in `_rescued_data` and never crash the job.
-# MAGIC   With `schema_drift_mode = evolve` a new source column is added to the Bronze table and filled from
-# MAGIC   `_rescued_data`.
-# MAGIC * **Audit.** Every row gets `batch_id`, `load_type`, `source_file`, `extract_timestamp` and `load_timestamp`.
 
 # COMMAND ----------
 

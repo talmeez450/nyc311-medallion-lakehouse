@@ -1,10 +1,6 @@
 # Databricks notebook source
 # MAGIC %md
 # MAGIC # 03 Bronze to Silver
-# MAGIC * Drops PII (only whitelisted columns are selected), casts to strict types with `try_cast`, standardises text.
-# MAGIC * Records that break a rule go to `silver_quarantine` with a reason. The batch never crashes on bad data.
-# MAGIC * `MERGE INTO` upserts by `unique_key`. A row is updated only if the incoming version is newer
-# MAGIC   (`extract_timestamp`) **and** its content changed (`row_hash`). Running the same data twice changes nothing.
 
 # COMMAND ----------
 

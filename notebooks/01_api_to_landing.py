@@ -1,14 +1,6 @@
 # Databricks notebook source
 # MAGIC %md
 # MAGIC # 01 Source to Landing (NYC Open Data API)
-# MAGIC Calls the Socrata API from inside Databricks and saves each page, unchanged, as a JSON file in the
-# MAGIC landing volume. Nothing is downloaded to a local machine.
-# MAGIC
-# MAGIC **Paging.** Keyset pagination (`unique_key > last key`, ordered by `unique_key`) instead of `$offset`,
-# MAGIC so rows cannot be skipped or repeated when the source changes during a long download.
-# MAGIC
-# MAGIC **Idempotent.** The batch folder is replaced on every run, and a `_manifest.json` is written only after
-# MAGIC every page succeeded. Bronze refuses a batch without a manifest.
 
 # COMMAND ----------
 
