@@ -1,4 +1,8 @@
 # Databricks notebook source
+# /// script
+# [tool.databricks.environment]
+# environment_version = "6"
+# ///
 # MAGIC %md
 # MAGIC # 00 Setup
 # MAGIC Run once. Creates the schema, the landing volume and every table (explicit DDL, no inference),
