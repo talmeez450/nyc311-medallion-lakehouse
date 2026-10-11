@@ -1,4 +1,8 @@
 # Databricks notebook source
+# MAGIC %md
+# MAGIC # _common
+# MAGIC Shared configuration, explicit schemas and helper functions used by every pipeline notebook.
+# MAGIC This notebook is not run on its own. The other notebooks load it with `%run ./_common`.
 
 # COMMAND ----------
 
@@ -15,6 +19,10 @@ from pyspark.sql.types import (BooleanType, DoubleType, LongType, StringType,
                                StructField, StructType, TimestampType)
 
 # COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## 1. Names and locations
+# MAGIC Everything lives in Unity Catalog (`workspace.nyc311`). Raw API responses are landed in a UC volume.
 
 # COMMAND ----------
 
@@ -35,6 +43,11 @@ API_MAX_PAGE_SIZE = 50000          # SODA limit per request
 DEFAULT_SCOPE_START = "2026-02-01T00:00:00"   # start of the Phase 1 baseline
 
 # COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## 2. Explicit schemas (no schema inference anywhere)
+# MAGIC The Bronze read schema keeps every source field as STRING. Types are enforced when data moves to Silver,
+# MAGIC so a type change in the source can never make the raw ingestion fail.
 
 # COMMAND ----------
 
@@ -111,6 +124,11 @@ NYC_LON_RANGE = (-74.35, -73.60)
 
 # COMMAND ----------
 
+# MAGIC %md
+# MAGIC ## 3. Parameters
+# MAGIC `get_param` creates a widget (so the notebook can be run interactively, from a Job, or from
+# MAGIC `dbutils.notebook.run`) and returns its value.
+
 # COMMAND ----------
 
 def get_param(name, default=""):
@@ -152,6 +170,9 @@ def redact(params):
 
 # COMMAND ----------
 
+# MAGIC %md
+# MAGIC ## 4. Window and filter logic
+
 # COMMAND ----------
 
 def resolve_window(load_type, start_date, end_date, lookback_days, watermark):
@@ -191,6 +212,11 @@ def build_where(load_type, window_start, window_end, scope_start):
             f"AND created_date >= '{scope_start}'")
 
 # COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## 5. Execution logging
+# MAGIC `PipelineRun` is a context manager. Whatever happens inside the `with` block, one row is written to
+# MAGIC `pipeline_execution_logs` (Success or Failure) and the exception, if any, is re-raised.
 
 # COMMAND ----------
 
@@ -249,6 +275,9 @@ class PipelineRun:
 
 # COMMAND ----------
 
+# MAGIC %md
+# MAGIC ## 6. Watermark (control table)
+
 # COMMAND ----------
 
 def read_watermark():
@@ -271,6 +300,9 @@ def advance_watermark(new_value):
         WHEN NOT MATCHED THEN INSERT *""")  # noqa: F821
 
 # COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## 7. API client (retry with exponential backoff)
 
 # COMMAND ----------
 
