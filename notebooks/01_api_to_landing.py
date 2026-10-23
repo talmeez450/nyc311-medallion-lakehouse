@@ -8,7 +8,6 @@
 
 # COMMAND ----------
 
-
 # MAGIC %md
 # MAGIC ## Parameters
 
