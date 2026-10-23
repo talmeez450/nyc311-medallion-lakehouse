@@ -2,7 +2,6 @@
 # MAGIC %md
 # MAGIC # 03 Bronze to Silver
 
-
 # COMMAND ----------
 
 # MAGIC %run ./_common
