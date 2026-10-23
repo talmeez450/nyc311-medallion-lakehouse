@@ -6,7 +6,6 @@
 
 # MAGIC %run ./_common
 
-
 # COMMAND ----------
 
 load_type         = get_param("load_type", "INCREMENTAL").upper()
