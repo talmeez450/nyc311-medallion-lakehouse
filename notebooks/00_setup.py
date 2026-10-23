@@ -12,6 +12,7 @@
 
 # COMMAND ----------
 
+
 # MAGIC %md
 # MAGIC ## Can this workspace reach the API?
 
