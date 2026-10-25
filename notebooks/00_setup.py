@@ -1,8 +1,6 @@
 # Databricks notebook source
 # MAGIC %md
-# MAGIC # 00 Setup
-# MAGIC Run once. Creates the schema, the landing volume and every table (explicit DDL, no inference),
-# MAGIC and checks that this workspace can reach the NYC Open Data API.
+# MAGIC # Setup
 
 # COMMAND ----------
 
@@ -11,9 +9,7 @@
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## 1. Can this workspace reach the API?
-# MAGIC Free Edition restricts outbound internet to trusted domains. If this cell fails, verify your identity
-# MAGIC in the workspace settings (LinkedIn verification lifts the restriction) and run it again.
+# MAGIC ## Can this workspace reach the API?
 
 # COMMAND ----------
 
@@ -27,7 +23,7 @@ except Exception as e:
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## 2. Schema and landing volume
+# MAGIC ## Schema and landing volume
 
 # COMMAND ----------
 
@@ -37,7 +33,7 @@ spark.sql(f"CREATE VOLUME IF NOT EXISTS {CATALOG}.{SCHEMA}.{VOLUME}")
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## 3. Tables
+# MAGIC ## Tables
 
 # COMMAND ----------
 
@@ -65,7 +61,7 @@ spark.sql(ddl(CONTROL_TBL, [("name", "STRING"), ("value_ts", "TIMESTAMP"), ("loa
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## 4. Informational primary key on Silver (not enforced by Delta, used for documentation and tooling)
+# MAGIC ## Informational primary key on Silver
 
 # COMMAND ----------
 

@@ -10,7 +10,6 @@
 # MAGIC | Backfill one month (API to Silver) | `load_type=FULL`, `start_date=2026-03-01`, `end_date=2026-04-01` |
 # MAGIC | Re-run Bronze to Silver for one batch | `stages=silver`, `batch_id=FULL_20260301_20260401` |
 # MAGIC | Re-run Raw to Bronze for one batch | `stages=bronze,silver`, `batch_id=...`, `load_type=...` |
-# MAGIC | Rebuild Gold only | `stages=gold`, `gold_full_refresh=true` |
 # MAGIC | Quick test | `max_pages=1` |
 
 # COMMAND ----------
@@ -58,8 +57,6 @@ if "bronze" in stages:
 if "silver" in stages:
     run_stage("./03_bronze_to_silver", dict(batch_id=batch_id or "ALL"))
 
-# The watermark moves forward only when this window is fully in Silver, so a failure in Bronze or Silver
-# can never leave a gap. A truncated test run (max_pages) never moves it.
 if {"landing", "bronze", "silver"} <= set(stages) and not landed.get("truncated"):
     advance_watermark(parse_ts(landed["window_end"]))
     print("watermark advanced to", landed["window_end"])

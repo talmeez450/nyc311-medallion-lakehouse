@@ -327,14 +327,6 @@ def api_get(params, token="", max_attempts=6, timeout=180):
 
 # COMMAND ----------
 
-# MAGIC %md
-# MAGIC ## 8. Bronze to Silver cleansing (pure DataFrame logic, no I/O)
-# MAGIC * Only whitelisted columns are selected, so PII and any new, unexpected column cannot reach Silver.
-# MAGIC * All casts use `try_cast`, so a bad value becomes NULL instead of crashing the job.
-# MAGIC * A record that fails a rule gets a `quarantine_reason` and is routed to `silver_quarantine`.
-
-# COMMAND ----------
-
 def _blank_to_null(col):
     """SQL fragment: trim and turn empty strings into NULL."""
     return f"nullif(trim({col}), '')"
