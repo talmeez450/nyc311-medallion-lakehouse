@@ -1,4 +1,11 @@
 # Databricks notebook source
+# MAGIC %md
+# MAGIC # _common
+# MAGIC Shared configuration, explicit schemas and helper functions used by every pipeline notebook.
+# MAGIC This notebook is not run on its own. The other notebooks load it with `%run ./_common`.
+
+# COMMAND ----------
+
 import json
 import os
 import re
@@ -10,6 +17,12 @@ import requests
 from pyspark.sql import functions as F
 from pyspark.sql.types import (BooleanType, DoubleType, LongType, StringType,
                                StructField, StructType, TimestampType)
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## 1. Names and locations
+# MAGIC Everything lives in Unity Catalog (`workspace.nyc311`). Raw API responses are landed in a UC volume.
 
 # COMMAND ----------
 
@@ -28,6 +41,13 @@ LANDING_ROOT = f"/Volumes/{CATALOG}/{SCHEMA}/{VOLUME}"
 API_URL = "https://data.cityofnewyork.us/resource/erm2-nwe9.json"
 API_MAX_PAGE_SIZE = 50000          # SODA limit per request
 DEFAULT_SCOPE_START = "2026-02-01T00:00:00"   # start of the Phase 1 baseline
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## 2. Explicit schemas (no schema inference anywhere)
+# MAGIC The Bronze read schema keeps every source field as STRING. Types are enforced when data moves to Silver,
+# MAGIC so a type change in the source can never make the raw ingestion fail.
 
 # COMMAND ----------
 
@@ -104,6 +124,13 @@ NYC_LON_RANGE = (-74.35, -73.60)
 
 # COMMAND ----------
 
+# MAGIC %md
+# MAGIC ## 3. Parameters
+# MAGIC `get_param` creates a widget (so the notebook can be run interactively, from a Job, or from
+# MAGIC `dbutils.notebook.run`) and returns its value.
+
+# COMMAND ----------
+
 def get_param(name, default=""):
     try:
         dbutils.widgets.text(name, str(default))      # noqa: F821 (dbutils exists in Databricks)
@@ -143,6 +170,11 @@ def redact(params):
 
 # COMMAND ----------
 
+# MAGIC %md
+# MAGIC ## 4. Window and filter logic
+
+# COMMAND ----------
+
 def resolve_window(load_type, start_date, end_date, lookback_days, watermark):
     """Return (window_start, window_end) as 'YYYY-MM-DDTHH:MM:SS' strings.
 
@@ -178,6 +210,13 @@ def build_where(load_type, window_start, window_end, scope_start):
             f"(resolution_action_updated_date >= '{window_start}' "
             f"AND resolution_action_updated_date <= '{window_end}')) "
             f"AND created_date >= '{scope_start}'")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## 5. Execution logging
+# MAGIC `PipelineRun` is a context manager. Whatever happens inside the `with` block, one row is written to
+# MAGIC `pipeline_execution_logs` (Success or Failure) and the exception, if any, is re-raised.
 
 # COMMAND ----------
 
@@ -236,6 +275,11 @@ class PipelineRun:
 
 # COMMAND ----------
 
+# MAGIC %md
+# MAGIC ## 6. Watermark (control table)
+
+# COMMAND ----------
+
 def read_watermark():
     rows = spark.sql(f"SELECT value_ts FROM {CONTROL_TBL} WHERE name = 'incremental_watermark'").collect()  # noqa: F821
     return rows[0][0].replace(tzinfo=None) if rows else None
@@ -254,6 +298,11 @@ def advance_watermark(new_value):
         ON t.name = s.name
         WHEN MATCHED THEN UPDATE SET *
         WHEN NOT MATCHED THEN INSERT *""")  # noqa: F821
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## 7. API client (retry with exponential backoff)
 
 # COMMAND ----------
 
@@ -391,3 +440,219 @@ def dedupe_latest(df):
         F.col("extract_timestamp").desc(), F.col("bronze_load_timestamp").desc(),
         F.col("resolution_action_updated_ts").desc_nulls_last())
     return df.withColumn("_rn", F.row_number().over(w)).where("_rn = 1").drop("_rn")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## 9. Gold layer helpers (Phase 3): star schema
+# MAGIC * **Surrogate keys are deterministic hashes** (`xxhash64` of the natural key). The same value always gets the
+# MAGIC   same key, so reruns are idempotent and the fact table can be built without looking keys up in the dimensions.
+# MAGIC * Missing values become the member `UNKNOWN`, so no fact row is ever orphaned.
+# MAGIC * Dimensions are refreshed with MERGE (insert new members, update changed attributes). The fact table is refreshed
+# MAGIC   with MERGE on `unique_key`. The aggregate table and `dim_time` are rebuilt by overwrite.
+
+# COMMAND ----------
+
+GOLD_FACT_TBL = f"{FQ}.fact_311_requests"
+GOLD_DIM_TIME_TBL = f"{FQ}.dim_time"
+GOLD_DIM_LOCATION_TBL = f"{FQ}.dim_location"
+GOLD_DIM_AGENCY_TBL = f"{FQ}.dim_agency"
+GOLD_DIM_TYPE_TBL = f"{FQ}.dim_complaint_type"
+GOLD_AGG_TBL = f"{FQ}.agg_daily_requests"
+UNKNOWN = "UNKNOWN"
+
+# First matching rule wins. Check your real complaint_type values and adjust (see notebook 07).
+COMPLAINT_GROUP_RULES = [
+    ("Noise", r"NOISE"),
+    ("Rodent", r"RODENT|\bRATS?\b|\bMICE\b|\bMOUSE\b"),
+    ("Illegal Parking", r"PARKING|BLOCKED DRIVEWAY"),
+    ("Heat and Hot Water", r"HEAT|HOT WATER"),
+    ("Sanitation", r"GARBAGE|SANITATION|TRASH|LITTER|DIRTY|REFUSE|RECYCL|DUMPING"),
+    ("Street and Traffic", r"STREET|TRAFFIC|POTHOLE|SIGNAL|SIDEWALK|HIGHWAY"),
+    ("Water and Sewer", r"WATER|SEWER|HYDRANT|CATCH BASIN|LEAK"),
+    ("Housing and Building", r"BUILDING|PAINT|PLUMBING|ELEVATOR|ELECTRIC|APPLIANCE|UNSANITARY"),
+]
+
+# Gold data model: (name, type, description)
+DIM_TIME_COLUMNS = [
+    ("date_key", "INT", "Primary key. Date as yyyymmdd"),
+    ("full_date", "DATE", "Calendar date"),
+    ("year", "INT", "Year"),
+    ("quarter", "INT", "Quarter 1 to 4"),
+    ("month", "INT", "Month number"),
+    ("month_name", "STRING", "Month name"),
+    ("year_month", "STRING", "yyyy-MM, sorts correctly as text"),
+    ("day_of_month", "INT", "Day of month"),
+    ("day_of_week", "INT", "1 = Sunday ... 7 = Saturday"),
+    ("day_name", "STRING", "Day name"),
+    ("week_of_year", "INT", "Week number"),
+    ("is_weekend", "BOOLEAN", "Saturday or Sunday"),
+    ("load_timestamp", "TIMESTAMP", "When the row was written"),
+]
+DIM_LOCATION_COLUMNS = [
+    ("location_key", "BIGINT", "Primary key. Hash of borough and zip code"),
+    ("borough", "STRING", "Borough (UNKNOWN if missing)"),
+    ("zip_code", "STRING", "5-digit zip code (UNKNOWN if missing)"),
+    ("centroid_latitude", "DOUBLE", "Average latitude of the zip's tickets, for maps"),
+    ("centroid_longitude", "DOUBLE", "Average longitude of the zip's tickets, for maps"),
+    ("load_timestamp", "TIMESTAMP", "When the row was written or last changed"),
+]
+DIM_AGENCY_COLUMNS = [
+    ("agency_key", "BIGINT", "Primary key. Hash of the agency code"),
+    ("agency_code", "STRING", "Agency acronym, such as NYPD"),
+    ("agency_name", "STRING", "Full agency name"),
+    ("load_timestamp", "TIMESTAMP", "When the row was written or last changed"),
+]
+DIM_TYPE_COLUMNS = [
+    ("complaint_type_key", "BIGINT", "Primary key. Hash of the complaint type"),
+    ("complaint_type", "STRING", "Problem category as published by the city"),
+    ("complaint_group", "STRING", "Our own grouping (Noise, Rodent, Illegal Parking, ... Other)"),
+    ("load_timestamp", "TIMESTAMP", "When the row was written or last changed"),
+]
+FACT_COLUMNS = [
+    ("unique_key", "STRING", "Primary key. One row per service request"),
+    ("created_date_key", "INT", "FK to dim_time.date_key (date created)"),
+    ("closed_date_key", "INT", "FK to dim_time.date_key (date closed). NULL until the request is closed"),
+    ("location_key", "BIGINT", "FK to dim_location"),
+    ("agency_key", "BIGINT", "FK to dim_agency"),
+    ("complaint_type_key", "BIGINT", "FK to dim_complaint_type"),
+    ("status", "STRING", "Current status"),
+    ("created_hour", "INT", "Hour of day the request was created (0 to 23)"),
+    ("is_resolved", "BOOLEAN", "TRUE when status is Closed and a closed date exists"),
+    ("resolution_hours", "DOUBLE", "Hours from created to closed (only for resolved requests)"),
+    ("request_count", "INT", "Always 1, so SUM gives the number of requests"),
+    ("source_row_hash", "STRING", "Silver row_hash, used to skip no-change updates"),
+    ("source_extract_timestamp", "TIMESTAMP", "API extraction time of the Silver version"),
+    ("silver_load_timestamp", "TIMESTAMP", "Silver load_timestamp of the source row (drives incremental refresh)"),
+    ("load_timestamp", "TIMESTAMP", "When the row was written to Gold"),
+]
+AGG_COLUMNS = [
+    ("created_date_key", "INT", "FK to dim_time.date_key"),
+    ("borough", "STRING", "Borough"),
+    ("agency_key", "BIGINT", "FK to dim_agency"),
+    ("complaint_type_key", "BIGINT", "FK to dim_complaint_type"),
+    ("requests_created", "BIGINT", "Requests created in the group"),
+    ("requests_closed", "BIGINT", "Of those, resolved"),
+    ("requests_open", "BIGINT", "Of those, not resolved"),
+    ("total_resolution_hours", "DOUBLE", "Sum of resolution hours (divide by resolved_with_duration for the average)"),
+    ("resolved_with_duration", "BIGINT", "Requests that have a resolution time"),
+    ("load_timestamp", "TIMESTAMP", "When the row was written"),
+]
+
+
+def gold_ddl(table, columns, cluster_by=None, comment=""):
+    cols = ",\n  ".join(f"`{c[0]}` {c[1]}" for c in columns)
+    cluster = f"\nCLUSTER BY ({', '.join(cluster_by)})" if cluster_by else ""
+    return f"CREATE TABLE IF NOT EXISTS {table} (\n  {cols}\n) USING DELTA{cluster} COMMENT '{comment}'"
+
+
+def complaint_group_expr(col):
+    expr = F.lit("Other")
+    for group, pattern in reversed(COMPLAINT_GROUP_RULES):
+        expr = F.when(F.upper(col).rlike(pattern), F.lit(group)).otherwise(expr)
+    return expr
+
+
+def gold_prepare(silver):
+    """Silver rows -> one row per request with normalised attributes and surrogate keys."""
+    agency = F.coalesce(F.col("agency"), F.lit(UNKNOWN))
+    agency_name = F.coalesce(F.col("agency_name"), F.lit(UNKNOWN))
+    borough = F.coalesce(F.col("borough"), F.lit(UNKNOWN))
+    zip_code = F.coalesce(F.col("incident_zip"), F.lit(UNKNOWN))
+    ctype = F.coalesce(F.col("complaint_type"), F.lit(UNKNOWN))
+    is_resolved = F.coalesce((F.col("status") == "Closed") & F.col("closed_ts").isNotNull(), F.lit(False))
+    hours = (F.unix_timestamp("closed_ts") - F.unix_timestamp("created_ts")) / 3600.0
+    return silver.select(
+        "unique_key",
+        F.date_format("created_ts", "yyyyMMdd").cast("int").alias("created_date_key"),
+        F.when(is_resolved, F.date_format("closed_ts", "yyyyMMdd").cast("int")).alias("closed_date_key"),
+        F.xxhash64(F.concat_ws("|", borough, zip_code)).alias("location_key"),
+        F.xxhash64(agency).alias("agency_key"),
+        F.xxhash64(ctype).alias("complaint_type_key"),
+        borough.alias("borough"), zip_code.alias("zip_code"),
+        agency.alias("agency_code"), agency_name.alias("agency_name"), ctype.alias("complaint_type"),
+        F.col("status"),
+        F.hour("created_ts").alias("created_hour"),
+        is_resolved.alias("is_resolved"),
+        F.when(is_resolved & (hours >= 0), F.round(hours, 2)).alias("resolution_hours"),
+        F.lit(1).alias("request_count"),
+        F.col("latitude"), F.col("longitude"),
+        F.col("row_hash").alias("source_row_hash"),
+        F.col("extract_timestamp").alias("source_extract_timestamp"),
+        F.col("load_timestamp").alias("silver_load_timestamp"),
+    )
+
+
+def to_fact(prep):
+    return prep.select(*[c[0] for c in FACT_COLUMNS if c[0] != "load_timestamp"]).withColumn(
+        "load_timestamp", F.current_timestamp())
+
+
+def to_dim_agency(prep):
+    return (prep.groupBy("agency_key", "agency_code").agg(F.max("agency_name").alias("agency_name"))
+            .withColumn("load_timestamp", F.current_timestamp())
+            .select(*[c[0] for c in DIM_AGENCY_COLUMNS]))
+
+
+def to_dim_type(prep):
+    return (prep.groupBy("complaint_type_key", "complaint_type").agg(F.lit(1).alias("_n"))
+            .withColumn("complaint_group", complaint_group_expr(F.col("complaint_type")))
+            .withColumn("load_timestamp", F.current_timestamp())
+            .select(*[c[0] for c in DIM_TYPE_COLUMNS]))
+
+
+def to_dim_location(prep):
+    return (prep.groupBy("location_key", "borough", "zip_code")
+            .agg(F.round(F.avg("latitude"), 4).alias("centroid_latitude"),
+                 F.round(F.avg("longitude"), 4).alias("centroid_longitude"))
+            .withColumn("load_timestamp", F.current_timestamp())
+            .select(*[c[0] for c in DIM_LOCATION_COLUMNS]))
+
+
+def build_dim_time(spark_session, start="2020-01-01", end="2030-12-31"):
+    days = spark_session.sql(f"SELECT explode(sequence(DATE'{start}', DATE'{end}', INTERVAL 1 DAY)) AS full_date")
+    return days.select(
+        F.date_format("full_date", "yyyyMMdd").cast("int").alias("date_key"), "full_date",
+        F.year("full_date").alias("year"), F.quarter("full_date").alias("quarter"),
+        F.month("full_date").alias("month"), F.date_format("full_date", "MMMM").alias("month_name"),
+        F.date_format("full_date", "yyyy-MM").alias("year_month"),
+        F.dayofmonth("full_date").alias("day_of_month"), F.dayofweek("full_date").alias("day_of_week"),
+        F.date_format("full_date", "EEEE").alias("day_name"), F.weekofyear("full_date").alias("week_of_year"),
+        F.dayofweek("full_date").isin(1, 7).alias("is_weekend"),
+        F.current_timestamp().alias("load_timestamp"))
+
+
+def build_agg(fact, dim_location):
+    """Fact joined to a small dimension (broadcast join), then grouped (shuffle + hash aggregate)."""
+    return (fact.join(F.broadcast(dim_location.select("location_key", "borough")), "location_key", "left")
+            .groupBy("created_date_key", F.coalesce(F.col("borough"), F.lit(UNKNOWN)).alias("borough"),
+                     "agency_key", "complaint_type_key")
+            .agg(F.count(F.lit(1)).alias("requests_created"),
+                 F.sum(F.when(F.col("is_resolved"), 1).otherwise(0)).cast("bigint").alias("requests_closed"),
+                 F.sum(F.when(~F.col("is_resolved"), 1).otherwise(0)).cast("bigint").alias("requests_open"),
+                 F.sum("resolution_hours").alias("total_resolution_hours"),
+                 F.count("resolution_hours").alias("resolved_with_duration"))
+            .withColumn("load_timestamp", F.current_timestamp())
+            .select(*[c[0] for c in AGG_COLUMNS]))
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## 10. Generic control values (watermarks)
+
+# COMMAND ----------
+
+def read_control(name):
+    rows = spark.sql(f"SELECT value_ts FROM {CONTROL_TBL} WHERE name = '{name}'").collect()  # noqa: F821
+    return rows[0][0].replace(tzinfo=None) if rows else None
+
+
+def set_control(name, value):
+    spark.sql(f"""
+        MERGE INTO {CONTROL_TBL} t
+        USING (SELECT '{name}' AS name,
+                      TIMESTAMP '{value:%Y-%m-%d %H:%M:%S.%f}' AS value_ts,
+                      current_timestamp() AS load_timestamp) s
+        ON t.name = s.name
+        WHEN MATCHED THEN UPDATE SET *
+        WHEN NOT MATCHED THEN INSERT *""")  # noqa: F821

@@ -257,3 +257,26 @@ Run `05_validation_and_demo`: it checks for duplicate keys and missing `load_tim
 * Databricks Free Edition has a daily compute quota and restricted outbound internet. Load the baseline month by month.
 * The cleansing rules, window logic and API paging are covered by local unit tests (`tests/`). The Delta-specific steps
   (`MERGE INTO`, `replaceWhere`, rescued data) run only on Databricks; `05_validation_and_demo` is the evidence for them.
+
+## 7. Results
+
+Full load (Feb 1 to Oct 1, 2026), one batch per month. Bronze row counts matched the API exactly:
+Feb 334,691 | Mar 342,390 | Apr 302,190 | May 331,980 | Jun 334,834 | Jul 343,133 | Aug 328,911 | Sep 323,627
+(total 2,641,756).
+
+Incremental loads: INCREMENTAL_20261004_20261011 (86,329 rows read, 69,809 inserted) and the repair
+load INCREMENTAL_20261001_20261011 (133,156 read, 31,719 inserted). Completeness check for Oct 1-3:
+API 34,506 rows, Silver 34,506 rows.
+
+Issue found and fixed: the incremental watermark was moved after landing instead of after Silver,
+which left a gap of 28,474 tickets. It now moves only after Bronze and Silver succeed.
+
+Silver total: <silver_rows> rows, <distinct_keys> distinct unique_key.
+
+## 8. Phase 3: Gold layer and BI
+
+* Gold star schema, data dictionary and ER diagram: `docs/phase3_gold_layer.md` (diagram sources: `docs/er_diagram.mmd`, `docs/architecture.mmd`)
+* Notebooks: `notebooks/06_silver_to_gold.py` (Silver to Gold), `notebooks/07_gold_optimize_bi_views.py` (checks, OPTIMIZE, query plans, BI views, FinOps queries)
+* `04_run_pipeline` now ends with the Gold refresh. Extra parameters: `stages` (add or remove `gold`), `gold_full_refresh=true` to rebuild Gold.
+* Power BI build guide, DAX measures and theme: `bi/`
+* Final report (PDF): `docs/Final_Report.pdf`

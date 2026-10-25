@@ -10,6 +10,7 @@
 # MAGIC | Backfill one month (API to Silver) | `load_type=FULL`, `start_date=2026-03-01`, `end_date=2026-04-01` |
 # MAGIC | Re-run Bronze to Silver for one batch | `stages=silver`, `batch_id=FULL_20260301_20260401` |
 # MAGIC | Re-run Raw to Bronze for one batch | `stages=bronze,silver`, `batch_id=...`, `load_type=...` |
+# MAGIC | Rebuild Gold only | `stages=gold`, `gold_full_refresh=true` |
 # MAGIC | Quick test | `max_pages=1` |
 
 # COMMAND ----------
@@ -18,7 +19,7 @@
 
 # COMMAND ----------
 
-stages        = [s.strip() for s in get_param("stages", "landing,bronze,silver").split(",")]
+stages        = [s.strip() for s in get_param("stages", "landing,bronze,silver,gold").split(",")]
 load_type     = get_param("load_type", "INCREMENTAL").upper()
 start_date    = get_param("start_date", "")
 end_date      = get_param("end_date", "")
@@ -30,6 +31,7 @@ max_pages     = get_param("max_pages", "0")
 app_token     = get_param("app_token", "")
 drift_mode    = get_param("schema_drift_mode", "evolve")
 purge         = get_param("purge_landing", "false")
+gold_full     = get_param("gold_full_refresh", "false")
 timeout       = int(get_param("stage_timeout_seconds", "7200"))
 
 # COMMAND ----------
@@ -62,9 +64,14 @@ if {"landing", "bronze", "silver"} <= set(stages) and not landed.get("truncated"
     advance_watermark(parse_ts(landed["window_end"]))
     print("watermark advanced to", landed["window_end"])
 
+# Gold refreshes right after Silver. It has its own watermark, so if it fails it simply catches up next run.
+if "gold" in stages:
+    run_stage("./06_silver_to_gold", dict(full_refresh=gold_full,
+                                          run_label=(f"GOLD_{batch_id}" if batch_id else "")))
+
 # COMMAND ----------
 
 display(spark.sql(f"""
     SELECT layer, batch_id, status, rows_read, rows_inserted, rows_updated, rows_quarantined,
            start_time, end_time, duration_seconds
-    FROM {LOG_TBL} ORDER BY start_time DESC LIMIT 10"""))
+    FROM {LOG_TBL} ORDER BY start_time DESC LIMIT 20"""))

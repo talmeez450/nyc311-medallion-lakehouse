@@ -1,0 +1,13 @@
+flowchart LR
+    A["NYC Open Data API<br/>Socrata dataset erm2-nwe9"] -->|"01 keyset paging, retry"| B[("Landing volume<br/>raw JSON + manifest")]
+    B -->|"02 explicit schema<br/>replaceWhere"| C[("Bronze<br/>bronze_requests")]
+    C -->|"03 cleanse, drop PII<br/>MERGE INTO"| D[("Silver<br/>silver_requests")]
+    C -.->|"rejected rows"| Q[("silver_quarantine")]
+    D -->|"06 MERGE + overwrite"| G[("Gold star schema<br/>fact + 4 dimensions + aggregate")]
+    G -->|"SQL warehouse<br/>Databricks connector"| P["Power BI dashboard"]
+    L[("pipeline_execution_logs")] -->|"audit views"| P
+    O["04 orchestrator<br/>parameters + watermark"] -.-> A
+    B -.->|"logs every step"| L
+    C -.-> L
+    D -.-> L
+    G -.-> L

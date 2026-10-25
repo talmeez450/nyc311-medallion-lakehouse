@@ -1,0 +1,64 @@
+erDiagram
+    DIM_TIME ||--o{ FACT_311_REQUESTS : "created_date_key"
+    DIM_TIME ||--o{ FACT_311_REQUESTS : "closed_date_key (inactive in BI)"
+    DIM_LOCATION ||--o{ FACT_311_REQUESTS : "location_key"
+    DIM_AGENCY ||--o{ FACT_311_REQUESTS : "agency_key"
+    DIM_COMPLAINT_TYPE ||--o{ FACT_311_REQUESTS : "complaint_type_key"
+    DIM_TIME ||--o{ AGG_DAILY_REQUESTS : "created_date_key"
+    DIM_AGENCY ||--o{ AGG_DAILY_REQUESTS : "agency_key"
+    DIM_COMPLAINT_TYPE ||--o{ AGG_DAILY_REQUESTS : "complaint_type_key"
+    FACT_311_REQUESTS {
+        string unique_key PK
+        int created_date_key FK
+        int closed_date_key FK
+        bigint location_key FK
+        bigint agency_key FK
+        bigint complaint_type_key FK
+        string status
+        int created_hour
+        boolean is_resolved
+        double resolution_hours
+        int request_count
+        string source_row_hash
+        timestamp load_timestamp
+    }
+    DIM_TIME {
+        int date_key PK
+        date full_date
+        int year
+        int quarter
+        int month
+        string month_name
+        string year_month
+        int day_of_week
+        string day_name
+        boolean is_weekend
+    }
+    DIM_LOCATION {
+        bigint location_key PK
+        string borough
+        string zip_code
+        double centroid_latitude
+        double centroid_longitude
+    }
+    DIM_AGENCY {
+        bigint agency_key PK
+        string agency_code
+        string agency_name
+    }
+    DIM_COMPLAINT_TYPE {
+        bigint complaint_type_key PK
+        string complaint_type
+        string complaint_group
+    }
+    AGG_DAILY_REQUESTS {
+        int created_date_key FK
+        string borough
+        bigint agency_key FK
+        bigint complaint_type_key FK
+        bigint requests_created
+        bigint requests_closed
+        bigint requests_open
+        double total_resolution_hours
+        bigint resolved_with_duration
+    }
